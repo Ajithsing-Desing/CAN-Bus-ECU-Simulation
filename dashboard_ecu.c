@@ -1,5 +1,6 @@
 
 #include <stdio.h>
+#include <time.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -9,6 +10,21 @@
 #include <net/if.h>
 #include <linux/can.h>
 #include <linux/can/raw.h>
+
+
+static double monotonic_seconds(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        perror("Clock error");
+        return -1.0;
+    }
+
+    return (double)ts.tv_sec +
+           (double)ts.tv_nsec / 1000000000.0;
+}
+
 
 int main(void)
 {
@@ -67,16 +83,37 @@ int main(void)
     printf("Dashboard ECU started. Waiting for RPM...\n");
     fflush(stdout);
 
+    double last_valid_time = monotonic_seconds();
+
+if (last_valid_time < 0) {
+    close(socket_fd);
+    return 1;
+}
+
     while (1) {
+
         fd_set read_fds;
         struct timeval timeout;
+
+        double now = monotonic_seconds();
+
+        if (now < 0) {
+            break;
+        }
+
+        double elapsed = now - last_valid_time;
+
+        if (elapsed >= 3.0 && !communication_lost) {
+            printf("WARNING: CAN communication timeout!\n");
+            fflush(stdout);
+            communication_lost = 1;
+        }
 
         FD_ZERO(&read_fds);
         FD_SET(socket_fd, &read_fds);
 
-        // Wait up to 3 seconds for a CAN message
-        timeout.tv_sec = 3;
-        timeout.tv_usec = 0;
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 100000;
 
         int result = select(socket_fd + 1,
                             &read_fds,
@@ -92,13 +129,7 @@ int main(void)
             break;
         }
 
-        // No CAN message received within 3 seconds
         if (result == 0) {
-            if (!communication_lost) {
-                printf("WARNING: CAN communication timeout!\n");
-                fflush(stdout);
-                communication_lost = 1;
-            }
             continue;
         }
 
@@ -118,18 +149,21 @@ int main(void)
             continue;
         }
 
-        // Valid RPM message received after timeout
+        int rpm = (frame.data[0] << 8) | frame.data[1];
+
+        last_valid_time = monotonic_seconds();
+
+        if (last_valid_time < 0) {
+            break;
+        }
+
         if (communication_lost) {
             printf("CAN communication restored!\n");
             communication_lost = 0;
         }
 
-        // Decode engine RPM
-        int rpm = (frame.data[0] << 8) | frame.data[1];
-
         printf("Dashboard: Engine RPM = %d\n", rpm);
 
-        // High RPM warning
         if (rpm > 4000) {
             printf("WARNING: High engine RPM!\n");
         }
