@@ -206,3 +206,17 @@ ESIGELEC School of Engineering
 ## Project Purpose
 
 Developed as a hands-on learning project to strengthen skills in embedded C, automotive communication protocols, Linux-based development, debugging, and automated testing.
+
+## Project Screenshots
+
+### Four-ECU CAN Bus Communication
+
+The Dashboard ECU receives engine RPM, brake status, and battery voltage messages over the virtual CAN network.
+
+![Four-ECU CAN Bus Simulation](screenshots/multi_ecu_output.png)
+
+### Automated Integration Testing
+
+Six Bash test scripts verify CAN message processing, warning conditions, invalid frame rejection, and engine communication timeout and recovery.
+
+![Automated CAN Bus Test Results](screenshots/automated_tests.png)
