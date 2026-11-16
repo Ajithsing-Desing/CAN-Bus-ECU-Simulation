@@ -11,11 +11,12 @@
 #include <linux/can.h>
 #include <linux/can/raw.h>
 
-#define ENGINE_CAN_ID 0x100
-#define BRAKE_CAN_ID  0x200
+#define ENGINE_CAN_ID  0x100
+#define BRAKE_CAN_ID   0x200
+#define BATTERY_CAN_ID 0x300
+
 #define TIMEOUT_SECONDS 3.0
 
-// Return elapsed monotonic time in seconds
 static double monotonic_seconds(void)
 {
     struct timespec ts;
@@ -37,7 +38,6 @@ int main(void)
     struct can_frame frame;
     int communication_lost = 0;
 
-    // Create CAN socket
     socket_fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
 
     if (socket_fd < 0) {
@@ -45,7 +45,6 @@ int main(void)
         return 1;
     }
 
-    // Select virtual CAN interface
     memset(&interface, 0, sizeof(interface));
     strncpy(interface.ifr_name, "vcan0", IFNAMSIZ - 1);
 
@@ -55,7 +54,6 @@ int main(void)
         return 1;
     }
 
-    // Bind socket to vcan0
     memset(&address, 0, sizeof(address));
     address.can_family = AF_CAN;
     address.can_ifindex = interface.ifr_ifindex;
@@ -67,8 +65,8 @@ int main(void)
         return 1;
     }
 
-    // Accept Engine ECU and Brake ECU messages
-    struct can_filter filters[2] = {
+    // Accept Engine, Brake and Battery messages
+    struct can_filter filters[3] = {
         {
             .can_id = ENGINE_CAN_ID,
             .can_mask = CAN_SFF_MASK |
@@ -77,6 +75,12 @@ int main(void)
         },
         {
             .can_id = BRAKE_CAN_ID,
+            .can_mask = CAN_SFF_MASK |
+                        CAN_EFF_FLAG |
+                        CAN_RTR_FLAG
+        },
+        {
+            .can_id = BATTERY_CAN_ID,
             .can_mask = CAN_SFF_MASK |
                         CAN_EFF_FLAG |
                         CAN_RTR_FLAG
@@ -94,7 +98,6 @@ int main(void)
     printf("Dashboard ECU started. Monitoring CAN bus...\n");
     fflush(stdout);
 
-    // Track the last valid Engine ECU message
     double last_valid_engine_time = monotonic_seconds();
 
     if (last_valid_engine_time < 0) {
@@ -114,7 +117,6 @@ int main(void)
 
         double elapsed = now - last_valid_engine_time;
 
-        // Detect missing valid Engine RPM messages
         if (elapsed >= TIMEOUT_SECONDS && !communication_lost) {
             printf("WARNING: Engine ECU communication timeout!\n");
             fflush(stdout);
@@ -124,7 +126,6 @@ int main(void)
         FD_ZERO(&read_fds);
         FD_SET(socket_fd, &read_fds);
 
-        // Check for messages every 100 milliseconds
         timeout.tv_sec = 0;
         timeout.tv_usec = 100000;
 
@@ -164,9 +165,8 @@ int main(void)
             continue;
         }
 
-        // Process Engine ECU messages
+        // Engine ECU
         if (frame.can_id == ENGINE_CAN_ID) {
-
             if (frame.can_dlc != 2) {
                 printf("Invalid Engine ECU frame\n");
                 fflush(stdout);
@@ -175,7 +175,6 @@ int main(void)
 
             int rpm = (frame.data[0] << 8) | frame.data[1];
 
-            // Reject RPM values outside simulated range
             if (rpm > 8000) {
                 printf("WARNING: Invalid engine RPM value!\n");
                 fflush(stdout);
@@ -200,9 +199,8 @@ int main(void)
             }
         }
 
-        // Process Brake ECU messages
+        // Brake ECU
         else if (frame.can_id == BRAKE_CAN_ID) {
-
             if (frame.can_dlc != 1) {
                 printf("Invalid Brake ECU frame\n");
                 fflush(stdout);
@@ -217,6 +215,27 @@ int main(void)
 
             printf("Dashboard: Brake %s\n",
                    frame.data[0] ? "PRESSED" : "RELEASED");
+        }
+
+        // Battery ECU
+        else if (frame.can_id == BATTERY_CAN_ID) {
+            if (frame.can_dlc != 2) {
+                printf("Invalid Battery ECU frame\n");
+                fflush(stdout);
+                continue;
+            }
+
+            int millivolts =
+                (frame.data[0] << 8) | frame.data[1];
+
+            double voltage = millivolts / 1000.0;
+
+            printf("Dashboard: Battery Voltage = %.2f V\n",
+                   voltage);
+
+            if (voltage < 12.0) {
+                printf("WARNING: Low battery voltage!\n");
+            }
         }
 
         fflush(stdout);
